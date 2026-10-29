@@ -63,6 +63,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # No provenance/SBOM attestations: they show up as "unknown/unknown"
+          # platforms in the manifest list and confuse simple clients (RouterOS).
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -75,4 +79,6 @@ jobs:
           platforms: linux/amd64
           push: false
           build-args: GO_BUILD_TAGS=
+          provenance: false
+          sbom: false
           cache-from: type=gha
