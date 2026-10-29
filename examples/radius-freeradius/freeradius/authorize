@@ -1,0 +1,18 @@
+# FreeRADIUS "users" file for the mosquitto-go-auth RADIUS demo.
+#
+# Access-Accept attributes understood by the plugin (defaults):
+#   Mikrotik-Group = "mqtt-superuser"   -> superuser
+#   Mikrotik-Group = "<group>"          -> rules from radius-groups.acl
+#   Filter-Id = "<access>:<topic>"      -> access: read|write|readwrite|subscribe|deny
+
+mqttadmin	Cleartext-Password := "adminpass"
+	Mikrotik-Group = "mqtt-superuser"
+
+sensor1	Cleartext-Password := "sensorpass"
+	Filter-Id += "readwrite:sensors/sensor1/#",
+	Filter-Id += "read:status/#",
+	Filter-Id += "deny:sensors/sensor1/private",
+	Mikrotik-Group = "sensors"
+
+sensor2	Cleartext-Password := "sensorpass"
+	Mikrotik-Group = "sensors"

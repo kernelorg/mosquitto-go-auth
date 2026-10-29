@@ -1,0 +1,8 @@
+# Topic rules per RADIUS group (value of auth_opt_radius_group_attr).
+# Rules before the first "group" line apply to every authenticated user.
+# Only whole-line comments are allowed: "#" is also the MQTT wildcard.
+topic read broadcast/#
+
+group sensors
+topic readwrite sensors/%u/#
+topic read status/#

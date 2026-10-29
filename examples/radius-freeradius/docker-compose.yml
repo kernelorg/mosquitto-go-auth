@@ -1,0 +1,36 @@
+# Demo: Mosquitto + mosquitto-go-auth (radius backend) + FreeRADIUS.
+#
+#   ./test.sh            # builds, starts and runs the end-to-end checks
+#   docker compose logs  # FreeRADIUS runs with -X, so every packet is shown
+#
+# Users (see freeradius/authorize):
+#   mqttadmin / adminpass   superuser (Mikrotik-Group = mqtt-superuser)
+#   sensor1   / sensorpass  readwrite sensors/sensor1/#, read status/#,
+#                           deny sensors/sensor1/private, group "sensors"
+services:
+  freeradius:
+    image: freeradius/freeradius-server:latest
+    command: ["freeradius", "-X"]
+    volumes:
+      - ./freeradius/clients.conf:/etc/raddb/clients.conf:ro
+      - ./freeradius/authorize:/etc/raddb/mods-config/files/authorize:ro
+
+  mosquitto:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.multiarch
+    image: mosquitto-go-auth-radius:local
+    depends_on:
+      - freeradius
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/conf.d:/mosquitto/config/conf.d:ro
+
+  # MQTT client tools for test.sh (the broker image has no shell).
+  client:
+    image: eclipse-mosquitto:2.0.22
+    profiles: ["test"]
+    entrypoint: ["/bin/sh", "-c"]
+    depends_on:
+      - mosquitto

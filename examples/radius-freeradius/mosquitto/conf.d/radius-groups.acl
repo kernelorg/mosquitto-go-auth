@@ -1,0 +1,7 @@
+# Rules for every authenticated user.
+topic read broadcast/#
+
+# Rules for users whose Mikrotik-Group is "sensors" (sensor2 relies on these).
+group sensors
+topic readwrite sensors/%u/#
+topic read status/#

@@ -43,6 +43,30 @@ test-hashing:
 test-telemetry:
 	go test ./telemetry -v -failfast -count=1
 
+# RADIUS backend tests start their own RADIUS/UDP and RadSec servers.
+test-radius:
+	go test ./backends -run TestRADIUS -v -failfast -count=1
+
+# Plugin with only the files and radius backends (much smaller shared object).
+minimal:
+	@echo "Bulding minimal plugin (files + radius) for $(UNAME_S)"
+	env CGO_CFLAGS="$(CFLAGS)" go build -tags minimal -buildmode=c-archive go-auth.go
+	env CGO_LDFLAGS="$(LDFLAGS)" go build -tags minimal -ldflags="-s -w" -buildmode=c-shared -o go-auth.so
+
+test-minimal:
+	go test -tags minimal ./backends -v -failfast -count=1
+
+# Mosquitto + plugin image from Dockerfile.multiarch (no QEMU needed for arm64).
+image:
+	./build-image.sh linux/amd64 mosquitto-go-auth-radius:local
+
+image-arm64:
+	./build-image.sh linux/arm64 mosquitto-go-auth-radius:arm64
+
+# End-to-end demo against FreeRADIUS (docker compose).
+test-radius-e2e:
+	./examples/radius-freeradius/test.sh
+
 build-docker-test:
 	docker build -t mosquitto-go-auth.test -f Dockerfile.runtest .
 
