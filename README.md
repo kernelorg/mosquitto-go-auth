@@ -1,9 +1,10 @@
 # Mosquitto Go Auth
 
-[![Test](https://github.com/lhns/mosquitto-go-auth/actions/workflows/test.yml/badge.svg)](https://github.com/lhns/mosquitto-go-auth/actions/workflows/test.yml)
-[![CodeQL](https://github.com/lhns/mosquitto-go-auth/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/lhns/mosquitto-go-auth/actions/workflows/codeql-analysis.yml)
-[![Release Notes](https://img.shields.io/github/release/lhns/mosquitto-go-auth.svg?maxAge=3600)](https://github.com/lhns/mosquitto-go-auth/releases/latest)
-[![MIT License](https://img.shields.io/github/license/lhns/mosquitto-go-auth.svg?maxAge=3600)](https://opensource.org/license/mit)
+[![Test](https://github.com/kernelorg/mosquitto-go-auth/actions/workflows/test.yml/badge.svg)](https://github.com/kernelorg/mosquitto-go-auth/actions/workflows/test.yml)
+[![CodeQL](https://github.com/kernelorg/mosquitto-go-auth/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/kernelorg/mosquitto-go-auth/actions/workflows/codeql-analysis.yml)
+[![Multi-arch image](https://github.com/kernelorg/mosquitto-go-auth/actions/workflows/build_radius_image.yml/badge.svg)](https://github.com/kernelorg/mosquitto-go-auth/actions/workflows/build_radius_image.yml)
+[![Release Notes](https://img.shields.io/github/release/kernelorg/mosquitto-go-auth.svg?maxAge=3600)](https://github.com/kernelorg/mosquitto-go-auth/releases/latest)
+[![MIT License](https://img.shields.io/github/license/kernelorg/mosquitto-go-auth.svg?maxAge=3600)](https://opensource.org/license/mit)
 
 Mosquitto Go Auth is an authentication and authorization plugin for the Mosquitto MQTT broker.
 The name is terrible, I know, but it's too late to change it. And, you know: naming, cache invalidation, off-by-one errors and whatnot.
@@ -25,6 +26,10 @@ Thanks to everyone that had kinds words and appreciated the project.
 
 2025-06-20 [lhns](https://github.com/lhns): I forked the repository from [iegomez/mosquitto-go-auth](https://github.com/iegomez/mosquitto-go-auth).
 Thank you [iegomez](https://github.com/iegomez) for creating this project and maintaining it over the years.
+
+2026-10-30 [kernelorg](https://github.com/kernelorg): I forked the repository from [lhns/mosquitto-go-auth](https://github.com/lhns/mosquitto-go-auth) and added a [RADIUS](#radius) backend (UDP and RadSec, MikroTik User Manager as the primary target, FreeRADIUS tested).
+Along with it: a `minimal` build tag (only the `files` and `radius` backends, for a much smaller plugin), `Dockerfile.multiarch` that cross-compiles Mosquitto and the plugin for amd64, arm64 and arm/v7 without QEMU, and ready-made images at `ghcr.io/kernelorg/mosquitto-go-auth-radius` for MikroTik RouterOS containers.
+Thank you [lhns](https://github.com/lhns) for keeping the project alive.
 
 ### Intro
 
