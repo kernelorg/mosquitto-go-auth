@@ -8,7 +8,7 @@ name: Build multi-arch image (Dockerfile.multiarch)
 on:
   push:
     branches: ['**']
-    tags: ['v*']
+    tags: ['v*', '[0-9]*']
   pull_request:
     branches: [master]
   release:

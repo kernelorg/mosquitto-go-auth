@@ -1558,7 +1558,7 @@ An end-to-end demo with FreeRADIUS lives in `examples/radius-freeradius`: `./tes
 
 #### Multi-arch image without QEMU (ARM64, MikroTik containers)
 
-Ready-made images are published to GitHub Packages by the `build_radius_image.yml` workflow on every push to `master` (tag `latest`) and on every `v*` tag, as a multi-arch manifest for `linux/amd64`, `linux/arm64` and `linux/arm/v7`:
+Ready-made images are published to GitHub Packages by the `build_radius_image.yml` workflow on every push to `master` (tag `latest`) and on every release tag (e.g. `3.6.0` or `v3.6.0`), as a multi-arch manifest for `linux/amd64`, `linux/arm64` and `linux/arm/v7`:
 
 ```
 docker pull ghcr.io/kernelorg/mosquitto-go-auth-radius:latest
