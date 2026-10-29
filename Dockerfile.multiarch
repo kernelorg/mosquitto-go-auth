@@ -1,5 +1,5 @@
 #
-# Small multi-arch image (linux/amd64, linux/arm64): Mosquitto built from
+# Small multi-arch image (linux/amd64, linux/arm64, linux/arm/v7): Mosquitto built from
 # source with TLS, websockets (static libwebsockets) and cJSON (dynamic
 # security plugin / mosquitto_ctrl), plus the go-auth plugin, on top of the
 # glibc distroless base (~20 MB). Everything is cross-compiled on the build
@@ -31,13 +31,15 @@ ARG LWS_VERSION
 
 RUN set -ex; \
     case "$TARGETARCH" in \
-      amd64) extra="" ;; \
-      arm64) extra="gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu"; dpkg --add-architecture arm64 ;; \
+      amd64) deb_arch=amd64; extra="" ;; \
+      arm64) deb_arch=arm64; extra="gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu" ;; \
+      arm)   deb_arch=armhf; extra="gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf libc6-dev-armhf-cross binutils-arm-linux-gnueabihf" ;; \
       *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
     esac; \
+    [ "$deb_arch" = amd64 ] || dpkg --add-architecture "$deb_arch"; \
     apt-get update; \
     apt-get install -y --no-install-recommends wget build-essential cmake \
-        "libssl-dev:$TARGETARCH" "libcjson-dev:$TARGETARCH" $extra; \
+        "libssl-dev:$deb_arch" "libcjson-dev:$deb_arch" $extra; \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -46,6 +48,7 @@ WORKDIR /build
 RUN set -ex; \
     case "$TARGETARCH" in \
       arm64) cmake_cross="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc" ;; \
+      arm)   cmake_cross="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=arm -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc" ;; \
       *) cmake_cross="" ;; \
     esac; \
     wget -qO lws.tar.gz "https://github.com/warmcat/libwebsockets/archive/v${LWS_VERSION}.tar.gz"; \
@@ -71,7 +74,7 @@ RUN set -ex; \
 
 # Mosquitto: broker, clients, mosquitto_ctrl and the dynamic-security plugin.
 RUN set -ex; \
-    case "$TARGETARCH" in arm64) cross="aarch64-linux-gnu-" ;; *) cross="" ;; esac; \
+    case "$TARGETARCH" in arm64) cross="aarch64-linux-gnu-" ;; arm) cross="arm-linux-gnueabihf-" ;; *) cross="" ;; esac; \
     wget -qO mosquitto.tar.gz "https://mosquitto.org/files/source/mosquitto-${MOSQUITTO_VERSION}.tar.gz"; \
     mkdir mosquitto; \
     tar -xzf mosquitto.tar.gz --strip-components=1 -C mosquitto; \
@@ -84,7 +87,7 @@ RUN set -ex; \
     make -C mosquitto -j "$(nproc)" $opts CFLAGS="-Wall -O2 -I/build/lws/include" LDFLAGS="-L/build/lws/lib"; \
     make -C mosquitto install DESTDIR=/out $opts; \
     ls -la /out/usr/local/sbin /out/usr/local/bin /out/usr/local/lib; \
-    case "$TARGETARCH" in arm64) triplet=aarch64-linux-gnu ;; *) triplet=x86_64-linux-gnu ;; esac; \
+    case "$TARGETARCH" in arm64) triplet=aarch64-linux-gnu ;; arm) triplet=arm-linux-gnueabihf ;; *) triplet=x86_64-linux-gnu ;; esac; \
     mkdir -p /out/lib; cp "/usr/lib/$triplet/libcjson.so.1" /out/lib/
 
 # ---------------------------------------------------------------------------
@@ -103,7 +106,7 @@ ENV CGO_ENABLED=1 \
     CGO_LDFLAGS="-shared -Wl,--unresolved-symbols=ignore-all"
 
 RUN set -ex; \
-    case "$TARGETARCH" in arm64) export CC=aarch64-linux-gnu-gcc ;; esac; \
+    case "$TARGETARCH" in arm64) export CC=aarch64-linux-gnu-gcc ;; arm) export CC=arm-linux-gnueabihf-gcc GOARM=7 ;; esac; \
     # auth-plugin.c includes go-auth.h, generate it before building the package.
     GOARCH="$TARGETARCH" go tool cgo -objdir /tmp/cgo -exportheader go-auth.h go-auth.go; \
     GOARCH="$TARGETARCH" go build -buildvcs=false -trimpath -tags "$GO_BUILD_TAGS" -ldflags="-s -w" -buildmode=c-shared -o go-auth.so .; \

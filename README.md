@@ -1553,7 +1553,16 @@ An end-to-end demo with FreeRADIUS lives in `examples/radius-freeradius`: `./tes
 
 #### Multi-arch image without QEMU (ARM64, MikroTik containers)
 
-`Dockerfile.multiarch` builds a small image for `linux/amd64` or `linux/arm64` on a plain amd64 host:
+Ready-made images are published to GitHub Packages by the `build_radius_image.yml` workflow on every push to `master` (tag `latest`) and on every `v*` tag, as a multi-arch manifest for `linux/amd64`, `linux/arm64` and `linux/arm/v7`:
+
+```
+docker pull ghcr.io/kernelorg/mosquitto-go-auth-radius:latest
+docker run -d -p 1883:1883 -v /path/to/conf.d:/mosquitto/config/conf.d:ro ghcr.io/kernelorg/mosquitto-go-auth-radius:latest
+```
+
+On RouterOS the same image can be pulled directly: `/container add remote-image=ghcr.io/kernelorg/mosquitto-go-auth-radius:latest ...` (set `/container/config set registry-url=https://ghcr.io`).
+
+`Dockerfile.multiarch` builds the same image for `linux/amd64`, `linux/arm64` or `linux/arm/v7` on a plain amd64 host:
 Mosquitto is cross-compiled from source with TLS, websockets (libwebsockets linked statically) and cJSON (dynamic-security plugin and `mosquitto_ctrl` are included), the plugin is cross-compiled with gcc, and the runtime stage is the glibc `gcr.io/distroless/base-debian12` image with only `COPY` steps, so neither `binfmt_misc` nor QEMU is required.
 `build-image.sh` falls back to the `docker:cli` container when the buildx plugin is not installed.
 

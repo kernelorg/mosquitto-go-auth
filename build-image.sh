@@ -3,8 +3,9 @@
 #
 #   ./build-image.sh                      # linux/amd64, tag mosquitto-go-auth-radius:local
 #   ./build-image.sh linux/arm64 mosquitto-go-auth-radius:arm64
+#   ./build-image.sh linux/arm/v7 mosquitto-go-auth-radius:armv7
 #
-# No QEMU/binfmt is needed for linux/arm64: the plugin is cross-compiled and
+# No QEMU/binfmt is needed for linux/arm64 or linux/arm/v7: everything is cross-compiled and
 # the runtime stage only copies files. When the buildx CLI plugin is missing,
 # the official docker:cli image (which bundles buildx) drives the build.
 set -euo pipefail
