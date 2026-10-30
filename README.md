@@ -1448,47 +1448,43 @@ auth_opt_ldap_acl_acc_attribute mqtt_topic_acc
 
 ### RADIUS
 
-The `radius` backend authenticates users against a RADIUS server (RFC 2865), over plain UDP or over TLS (RadSec, RFC 6614).
-It was written with MikroTik RouterOS **User Manager** as the primary target, but any server works (FreeRADIUS is used in the tests and in the demo).
+The `radius` backend authenticates users against a RADIUS server (RFC 2865) over UDP or RadSec (RFC 6614).
+Primary target is MikroTik RouterOS User Manager; FreeRADIUS is used in the tests and in the demo.
 
 How it works:
 
-* `user` check: an `Access-Request` is sent with `User-Name`, `User-Password` (PAP) or `CHAP-Password`, `NAS-Identifier`, `NAS-IP-Address` (optional), `Service-Type = Login-User`, `Calling-Station-Id = <clientid>` and a `Message-Authenticator`. `Access-Accept` grants, `Access-Reject` denies, no answer from any server is an error (so `auth_opt_retry_count` applies).
-* RADIUS has no way to query a user without their password, so the attributes of the `Access-Accept` are **cached per username** (`radius_attr_cache_seconds`, sliding expiration) and the `superuser` and `acl` checks are answered from that cache. Consequences: revoking rights on the server takes effect at the next connection, and the cache TTL must be longer than your longest client session. A cache miss means "not a superuser" and "no ACL rules".
-* `superuser` check: true when the attribute `radius_superuser_attr` contains `radius_superuser_value` (default `Mikrotik-Group = mqtt-superuser`).
-* `acl` check: rules come from two sources that are merged:
-  * every value of `radius_acl_attr` (default `Filter-Id`) in the form `<access>:<topic pattern>` where access is `read`, `write`, `readwrite`, `subscribe`, `deny` or the numeric mosquitto value, e.g. `readwrite:sensors/%u/#`, `deny:sensors/%u/private`;
-  * a local group file (`radius_acl_file`) selected by the groups found in `radius_group_attr` (default `Mikrotik-Group`).
+* `user` check: an `Access-Request` with `User-Name`, `User-Password` (PAP) or `CHAP-Password`, `NAS-Identifier`, `NAS-IP-Address`, `Service-Type = Login-User`, `Calling-Station-Id = <clientid>` and `Message-Authenticator`. `Access-Accept` grants, `Access-Reject` denies, no answer from any server is an error.
+* RADIUS cannot be queried without the user's password, so the attributes of the `Access-Accept` are cached per username (`radius_attr_cache_seconds`, extended on every hit) and the `superuser` and `acl` checks are answered from that cache. Rights revoked on the server take effect at the next connection. The cache TTL must exceed the longest client session.
+* `superuser` check: `radius_superuser_attr` contains `radius_superuser_value`.
+* `acl` check: rules from the values of `radius_acl_attr` (`<access>:<topic pattern>`, access is `read`, `write`, `readwrite`, `subscribe`, `deny` or the numeric mosquitto value) plus the rules of the group file for every group listed in `radius_group_attr`. Patterns support `%u` (username) and `%c` (clientid). A matching `deny` rule wins, `readwrite` covers everything, `read` also allows `subscribe` except on `#`. Without any applicable rule `radius_acl_default` decides.
 
-  Patterns support `%u` (username) and `%c` (clientid) and are matched like the `files` backend: a matching `deny` rule always wins, `readwrite` covers everything, `read` also allows `subscribe` (except on `#`). When no rule applies, `radius_acl_default` decides (default `deny`).
+Responses are verified with the Response Authenticator and, when present, the `Message-Authenticator` (CVE-2024-3596).
 
-Responses are verified with the Response Authenticator and, when present, the `Message-Authenticator` (CVE-2024-3596 "Blast-RADIUS"). Set `radius_require_message_authenticator true` once your server always sends it (FreeRADIUS >= 3.2.5 does).
+| Option                                        | default        | Mandatory | Meaning                                                                        |
+|-----------------------------------------------|----------------|:---------:|--------------------------------------------------------------------------------|
+| auth_opt_radius_servers                       |                |     Y     | Comma separated `host[:port]`, tried in order. Default port 1812, 2083 for radsec |
+| auth_opt_radius_secret                        |                |  Y (udp)  | Shared secret. RadSec always uses `radsec`                                     |
+| auth_opt_radius_protocol                      | udp            |     N     | `udp` or `radsec`                                                              |
+| auth_opt_radius_timeout_ms                    | 2000           |     N     | Timeout of one request                                                         |
+| auth_opt_radius_retries                       | 1              |     N     | Extra attempts per server before moving to the next one                        |
+| auth_opt_radius_nas_identifier                | mosquitto      |     N     | `NAS-Identifier` attribute                                                     |
+| auth_opt_radius_nas_ip                        |                |     N     | `NAS-IP-Address` attribute (IPv4)                                              |
+| auth_opt_radius_auth_protocol                 | pap            |     N     | `pap` or `chap`                                                                |
+| auth_opt_radius_attr_cache_seconds            | 86400          |     N     | Lifetime of the cached Access-Accept attributes                                |
+| auth_opt_radius_superuser_attr                | Mikrotik-Group |     N     | Attribute holding the superuser marker                                         |
+| auth_opt_radius_superuser_value               | mqtt-superuser |     N     | Value that marks a superuser. Empty disables superusers                        |
+| auth_opt_radius_acl_attr                      | Filter-Id      |     N     | Attribute holding `<access>:<topic>` rules. Empty disables                     |
+| auth_opt_radius_group_attr                    | Mikrotik-Group |     N     | Attribute holding group names for the group file. Empty disables               |
+| auth_opt_radius_acl_file                      |                |     N     | Group ACL file, reloaded on `SIGHUP`                                           |
+| auth_opt_radius_acl_default                   | deny           |     N     | `deny` or `allow` when no rule applies                                         |
+| auth_opt_radius_require_message_authenticator | false          |     N     | Reject responses without a valid `Message-Authenticator`                       |
+| auth_opt_radius_tls_ca                        |                |     N     | radsec: CA bundle (PEM). System roots when empty                               |
+| auth_opt_radius_tls_cert, auth_opt_radius_tls_key |            |     N     | radsec: client certificate and key                                             |
+| auth_opt_radius_tls_verify                    | true           |     N     | radsec: `false` skips server certificate verification                          |
 
-| Option                                        | default        | Mandatory | Meaning                                                                                   |
-|-----------------------------------------------|----------------|:---------:|-------------------------------------------------------------------------------------------|
-| auth_opt_radius_servers                       |                |     Y     | Comma separated `host[:port]` list, tried in order (default port 1812, 2083 for radsec)    |
-| auth_opt_radius_secret                        |                |  Y (udp)  | Shared secret. Ignored with radsec, where it is always `radsec`                           |
-| auth_opt_radius_protocol                      | udp            |     N     | `udp` or `radsec` (RADIUS over TLS, TCP)                                                  |
-| auth_opt_radius_timeout_ms                    | 2000           |     N     | Timeout of one request                                                                    |
-| auth_opt_radius_retries                       | 1              |     N     | Extra attempts per server before moving to the next one                                   |
-| auth_opt_radius_nas_identifier                | mosquitto      |     N     | `NAS-Identifier` attribute                                                                |
-| auth_opt_radius_nas_ip                        |                |     N     | `NAS-IP-Address` attribute (IPv4)                                                         |
-| auth_opt_radius_auth_protocol                 | pap            |     N     | `pap` or `chap`                                                                           |
-| auth_opt_radius_attr_cache_seconds            | 86400          |     N     | Lifetime of cached Access-Accept attributes, extended on every hit                        |
-| auth_opt_radius_superuser_attr                | Mikrotik-Group |     N     | Attribute holding the superuser marker                                                    |
-| auth_opt_radius_superuser_value               | mqtt-superuser |     N     | Value that marks a superuser; empty disables superusers                                   |
-| auth_opt_radius_acl_attr                      | Filter-Id      |     N     | Attribute whose values are `<access>:<topic>` rules; empty disables                       |
-| auth_opt_radius_group_attr                    | Mikrotik-Group |     N     | Attribute holding group names for the group file; empty disables                          |
-| auth_opt_radius_acl_file                      |                |     N     | Group ACL file (see below), reloaded on `SIGHUP`                                          |
-| auth_opt_radius_acl_default                   | deny           |     N     | `deny` or `allow` when no rule applies (use `allow` for "authentication only")            |
-| auth_opt_radius_require_message_authenticator | false          |     N     | Reject responses without a valid `Message-Authenticator`                                  |
-| auth_opt_radius_tls_ca                        |                |     N     | radsec: CA bundle (PEM) used to verify the server; system roots when empty                |
-| auth_opt_radius_tls_cert, auth_opt_radius_tls_key |            |     N     | radsec: client certificate and key (mutual TLS)                                           |
-| auth_opt_radius_tls_verify                    | true           |     N     | radsec: set to `false` to skip server certificate verification (testing only)             |
+Attribute names: `Filter-Id`, `Class`, `Reply-Message`, `User-Name`, `Mikrotik-Group`, `Mikrotik-Realm`, `Mikrotik-Address-List`, `Mikrotik-Wireless-Comment`, a standard attribute number, or `vsa:<vendor-id>:<type>`.
 
-Attribute names accepted by the `*_attr` options: `Filter-Id`, `Class`, `Reply-Message`, `User-Name`, `Mikrotik-Group`, `Mikrotik-Realm`, `Mikrotik-Address-List`, `Mikrotik-Wireless-Comment`, a bare standard attribute number, or any vendor specific sub-attribute as `vsa:<vendor-id>:<type>` (e.g. `vsa:14988:3` is `Mikrotik-Group`).
-
-Group ACL file format (only whole-line comments, since `#` is also the MQTT wildcard; rules before the first `group` line apply to every authenticated user):
+Group ACL file. Rules before the first `group` line apply to every authenticated user. Only whole-line comments are allowed.
 
 ```
 topic read broadcast/#
@@ -1506,75 +1502,73 @@ auth_opt_backends radius
 auth_opt_radius_servers 192.168.88.1, 192.168.88.2:1812
 auth_opt_radius_secret changeme
 auth_opt_radius_nas_identifier mosquitto
-auth_opt_radius_acl_file /etc/mosquitto/conf.d/radius-groups.acl
+auth_opt_radius_acl_file /mosquitto/config/conf.d/radius-groups.acl
 ```
 
-Authentication only, with ACLs kept in a `files` backend:
+Authentication only, ACLs from the `files` backend:
 
 ```
 auth_opt_backends radius, files
 auth_opt_radius_register user, superuser
 auth_opt_files_register acl
-auth_opt_files_acl_path /etc/mosquitto/conf.d/acls
+auth_opt_files_acl_path /mosquitto/config/conf.d/acls
 ```
 
 #### MikroTik User Manager
 
-Tested on RouterOS 7 with the `user-manager` package and the broker running as a RouterOS container on the same device. Menu paths are those of RouterOS 7.1x (`/user-manager/user/group`, not `user-group`).
+RouterOS 7 with the `user-manager` package. Addresses below match the [RouterOS container quick start](#routeros-container-quick-start).
 
-1. Enable the server and declare the attributes the plugin reads. `Mikrotik-Group` is built in, `Filter-Id` usually is not: without this step adding a group fails with `input does not match any value of attribute`.
+Enable the server and declare `Filter-Id`:
 
-   ```
-   /user-manager set enabled=yes
-   /user-manager/attribute add name=Filter-Id type-id=11 value-type=string packet-types=access-accept
-   ```
+```
+/user-manager set enabled=yes
+/user-manager/attribute add name=Filter-Id type-id=11 value-type=string packet-types=access-accept
+```
 
-2. Register the broker as a RADIUS client. The address is the **source address of the RADIUS requests**: for a container that is its veth address (e.g. `172.18.0.2`, or the whole `172.18.0.0/24`), for an external broker its LAN address. Requests from an unknown address are dropped silently, without a log entry.
+Register the broker. The address is the source address of the RADIUS requests, for a container its veth address. Requests from unknown addresses are dropped without a log entry.
 
-   ```
-   /user-manager/router add name=mosquitto address=172.18.0.2 shared-secret=changeme
-   ```
+```
+/user-manager/router add name=mosquitto address=172.18.0.2 shared-secret=changeme
+```
 
-3. If the firewall `input` chain drops traffic that is not from the LAN interface list (the default configuration does), allow RADIUS from the container network:
+Allow RADIUS from the container network in the firewall:
 
-   ```
-   /ip/firewall/filter add chain=input protocol=udp dst-port=1812 src-address=172.18.0.0/24 action=accept comment="RADIUS from containers" place-before=0
-   ```
+```
+/ip/firewall/filter add chain=input protocol=udp dst-port=1812 src-address=172.18.0.0/24 action=accept comment="RADIUS from containers" place-before=0
+```
 
-4. Create groups with the attributes and assign users. Quote the attribute list, it contains `%` and `#`. `%u` is replaced by the plugin with the user name, so one rule gives every member their own subtree.
+Create groups and users. Quote the attribute list. `%u` becomes the user name, so one rule gives every member its own subtree. Several rules are comma separated.
 
-   ```
-   /user-manager/user/group add name=debica outer-auths=pap attributes="Filter-Id:readwrite:debica/%u/#"
-   /user-manager/user/group add name=mqtt-admins outer-auths=pap attributes="Mikrotik-Group:mqtt-superuser"
-   /user-manager/user add name=sensor1 password=secret group=debica
-   /user-manager/user add name=admin password=secret group=mqtt-admins
-   ```
+```
+/user-manager/user/group add name=debica outer-auths=pap attributes="Filter-Id:readwrite:debica/%u/#"
+/user-manager/user/group add name=mqtt-admins outer-auths=pap attributes="Mikrotik-Group:mqtt-superuser"
+/user-manager/user add name=sensor1 password=secret group=debica
+/user-manager/user add name=admin password=secret group=mqtt-admins
+```
 
-   Several rules are comma separated: `attributes="Filter-Id:readwrite:debica/%u/#,Filter-Id:read:debica/common/#"`. Rights take effect at the client's next connection.
-   Alternatively keep only `Mikrotik-Group:<name>` in User Manager and put the topic rules in the group file of the plugin (`radius_acl_file`): useful when the rules are many or RouterOS rejects the characters.
+Rights take effect at the next connection of the client. Rules can also live in the group file of the plugin: put `Mikrotik-Group:<name>` in the group attributes and the topics under `group <name>` in `radius_acl_file`.
 
-5. Check what the server sends and what the plugin does:
+Logs:
 
-   ```
-   /user-manager/user/group print detail
-   /log print where topics~"radius"
-   /log print where topics~"container"
-   ```
+```
+/log print where topics~"radius"
+/log print where topics~"container"
+```
 
-For RadSec set `protocol=radsec` on the router entry, a certificate in `/user-manager set radsec-certificate=...` and `auth_opt_radius_protocol radsec` plus `auth_opt_radius_tls_ca` on the plugin side.
+RadSec: `protocol=radsec` on the router entry, a certificate in `/user-manager set radsec-certificate=`, `auth_opt_radius_protocol radsec` and `auth_opt_radius_tls_ca` on the plugin side.
 
 #### Troubleshooting
 
-| Symptom (client side) | Plugin log | Cause |
+| Client | Plugin log | Cause |
 |---|---|---|
-| `Connection error: Connection Refused: not authorised.` | `user X rejected` | Wrong password or unknown user: RADIUS answered `Access-Reject`. Authentication works. |
-| `The connection was lost.` after exactly `radius_timeout_ms` × (`radius_retries` + 1), e.g. 4 s, no CONNACK | `server A:1812 did not answer` | No answer from RADIUS: unknown NAS address in `/user-manager/router`, wrong firewall, wrong `radius_servers`, server disabled. The plugin reports an error and Mosquitto closes the connection without CONNACK. |
-| `The connection was lost.` immediately, no user name sent | `empty username or password not allowed` | Anonymous connection; set `auth_opt_allow_empty_credentials true` only if you really want that. |
-| CONNACK ok, then `PUBACK ... RC:135` / `Not authorized` (MQTT 5) or the message is silently dropped (MQTT 3) | `no cached attributes` or nothing | ACL denied: no `Filter-Id` rule, no group file rule, `radius_acl_default deny`. Check `%u` rules (`debica/%u/#` is not `debica/#`) and leading slashes (`/debica` is a different topic than `debica`). |
-| `response authenticator mismatch` | same | Shared secret differs between `radius_secret` and the router entry. |
-| `unknown or empty hasher, defaulting to PBKDF2` at startup | | Harmless, from the password hasher every backend gets; add `auth_opt_hasher pbkdf2` to silence it. |
+| `Connection Refused: not authorised` | `user X rejected` | Wrong password or unknown user. RADIUS works. |
+| `The connection was lost` after `radius_timeout_ms` × (`radius_retries` + 1), no CONNACK | `server A:1812 did not answer` | RADIUS unreachable: router entry, firewall, `radius_servers`, server disabled. |
+| `The connection was lost` immediately | `empty username or password not allowed` | Anonymous connection. |
+| CONNACK 0, then `PUBACK RC:135` (MQTT 5) or the message is dropped (MQTT 3) | `no cached attributes` or nothing | ACL denied: no matching rule, `radius_acl_default deny`, `%u` subtree, leading slash in the topic. |
+| | `response authenticator mismatch` | Shared secret mismatch. |
+| | `unknown or empty hasher, defaulting to PBKDF2` | Harmless. `auth_opt_hasher pbkdf2` silences it. |
 
-Use `mosquitto_pub -d -V 5 -q 1` when testing: MQTT 5 with QoS 1 reports ACL denials in the PUBACK reason code, MQTT 3 drops the message silently.
+Test with `mosquitto_pub -d -V 5 -q 1`: MQTT 5 with QoS 1 reports ACL denials in the PUBACK reason code.
 
 #### RadSec
 
@@ -1586,34 +1580,34 @@ auth_opt_radius_tls_cert /etc/mosquitto/certs/mosquitto.pem
 auth_opt_radius_tls_key /etc/mosquitto/certs/mosquitto.key
 ```
 
-One TLS connection per server is kept open and re-established transparently.
+One TLS connection per server is kept open and re-established when needed.
 
 #### Testing RADIUS
 
-Unit tests start their own RADIUS/UDP and RadSec servers, so no external service is needed:
+Unit tests start their own RADIUS/UDP and RadSec servers:
 
 ```
 go test ./backends -run TestRADIUS -v
 ```
 
-An end-to-end demo with FreeRADIUS lives in `examples/radius-freeradius`: `./test.sh` builds the image from `Dockerfile.multiarch`, starts FreeRADIUS and Mosquitto with `docker compose`, and publishes/subscribes with `mosquitto_pub`/`mosquitto_sub` (from an `eclipse-mosquitto` client container) to check authentication, `Filter-Id` rules, deny rules and the group file.
+End-to-end demo with FreeRADIUS in `examples/radius-freeradius`: `./test.sh` builds the image, starts FreeRADIUS and Mosquitto with `docker compose` and checks authentication, `Filter-Id` rules, deny rules, the group file and the websockets listener with `mosquitto_pub`/`mosquitto_sub`.
 
 #### Multi-arch image without QEMU (ARM64, MikroTik containers)
 
 [![Latest image tag](https://img.shields.io/github/v/release/kernelorg/mosquitto-go-auth?label=ghcr.io%20image%20tag)](https://github.com/kernelorg/mosquitto-go-auth/pkgs/container/mosquitto-go-auth-radius)
 
-Ready-made images are published to GitHub Packages by the `build_radius_image.yml` workflow on every push to `master` (tag `latest`) and on every release (tags `X.Y.Z` and `X.Y`, the badge above shows the current one), as a multi-arch manifest for `linux/amd64`, `linux/arm64` and `linux/arm/v7`:
+Images are published to GitHub Packages on every push to `master` (tag `latest`) and on every release (tags `X.Y.Z` and `X.Y`) for `linux/amd64`, `linux/arm64` and `linux/arm/v7`:
 
 ```
 docker pull ghcr.io/kernelorg/mosquitto-go-auth-radius:latest
 docker run -d -p 1883:1883 -v /path/to/conf.d:/mosquitto/config/conf.d:ro ghcr.io/kernelorg/mosquitto-go-auth-radius:latest
 ```
 
-The image contains Mosquitto built from source (version from the `MOSQUITTO_VERSION` build argument of `Dockerfile.multiarch`, currently the 2.1.x line) with TLS, built-in websockets and cJSON (dynamic-security plugin and `mosquitto_ctrl` included; the sqlite persistence plugin, the `mosquitto_ctrl` shell and the HTTP API are left out), and the plugin built with `-tags minimal` (only the `files` and `radius` backends), on the glibc `gcr.io/distroless/base-debian12` base. There is no shell inside. Mosquitto runs as `nonroot`, reads `/mosquitto/config/mosquitto.conf` (which includes `/mosquitto/config/conf.d`) and loads the plugin from `/mosquitto/go-auth.so`. Add `listener 9001` and `protocol websockets` in `conf.d` for MQTT over WebSockets.
+Contents: Mosquitto 2.1.x built from source with TLS, websockets and cJSON (dynamic-security plugin and `mosquitto_ctrl`; no sqlite persistence, ctrl shell or HTTP API), the plugin built with `-tags minimal` (`files` and `radius` backends), base `gcr.io/distroless/base-debian12`, no shell. Mosquitto runs as `nonroot`, reads `/mosquitto/config/mosquitto.conf`, includes `/mosquitto/config/conf.d` and loads `/mosquitto/go-auth.so`. For MQTT over WebSockets add `listener 9001` and `protocol websockets` in `conf.d`.
 
-`Dockerfile.multiarch` builds the same image for `linux/amd64`, `linux/arm64` or `linux/arm/v7` on a plain amd64 host: everything is cross-compiled with gcc and the runtime stage only copies files, so neither `binfmt_misc` nor QEMU is required (`build-image.sh` falls back to the `docker:cli` container when the buildx plugin is not installed). Pass `--build-arg GO_BUILD_TAGS=` to get every backend; locally `make minimal` or `go build -tags minimal -buildmode=c-shared -o go-auth.so .` does the same.
+The Mosquitto version is the `MOSQUITTO_VERSION` build argument of `Dockerfile.multiarch`. `--build-arg GO_BUILD_TAGS=` builds the plugin with every backend. The plugin needs glibc: musl cannot `dlopen()` Go shared libraries ([golang/go#54805](https://github.com/golang/go/issues/54805)).
 
-Alpine/musl is not an option: musl refuses to `dlopen()` Go c-shared libraries (initial-exec TLS, [golang/go#54805](https://github.com/golang/go/issues/54805)), so the plugin needs glibc.
+Local build, cross-compiled without QEMU:
 
 ```
 ./build-image.sh linux/arm64 mosquitto-go-auth-radius:arm64
@@ -1622,7 +1616,7 @@ docker save mosquitto-go-auth-radius:arm64 -o mosquitto-go-auth-radius-arm64.tar
 
 ##### RouterOS container quick start
 
-On a RouterOS 7 device with the `container` package (arm64, arm or x86_64), with `conf.d` prepared on the disk (`go-auth.conf` and optionally `radius-groups.acl`, see the [example](examples/radius-freeradius/mosquitto/conf.d)):
+RouterOS 7 with the `container` package. `conf.d` on the disk holds `go-auth.conf` and optionally `radius-groups.acl` (see the [example](examples/radius-freeradius/mosquitto/conf.d)).
 
 ```
 /interface/veth add name=veth-mqtt address=172.18.0.2/24 gateway=172.18.0.1
@@ -1636,8 +1630,7 @@ On a RouterOS 7 device with the `container` package (arm64, arm or x86_64), with
 /container start [find]
 ```
 
-From inside the container the router is `172.18.0.1`, so `go-auth.conf` uses `auth_opt_radius_servers 172.18.0.1:1812`, and User Manager sees the requests coming from `172.18.0.2` (see [MikroTik User Manager](#mikrotik-user-manager) for the router entry and the firewall rule). The plugin log goes to `/log print where topics~"container"`.
-To use a file instead of the registry: `/container add file=mosquitto-go-auth-radius-arm64.tar ...` with the tar from `docker save` above.
+Inside the container the router is `172.18.0.1`: `go-auth.conf` uses `auth_opt_radius_servers 172.18.0.1:1812`, User Manager sees the requests from `172.18.0.2`. The plugin log is in `/log print where topics~"container"`. A tar from `docker save` can be used instead of the registry with `/container add file=...`.
 
 ### Custom
 
@@ -1918,12 +1911,11 @@ Only images for x86_64/AMD64 and ARMv7 have been tested. ARMv6 and ARM64 hardwar
 
 #### Prebuilt images
 
-This fork publishes a single image, [kernelorg/mosquitto-go-auth-radius](https://github.com/kernelorg/mosquitto-go-auth/pkgs/container/mosquitto-go-auth-radius): Mosquitto 2.1.x (TLS, websockets, cJSON) plus the plugin built with `-tags minimal` (`files` and `radius` backends only), for `linux/amd64`, `linux/arm64` and `linux/arm/v7`. See [Multi-arch image without QEMU](#multi-arch-image-without-qemu-arm64-mikrotik-containers) for details and RouterOS usage.
-To run it, replace `/conf` with the directory holding your `.conf` files (and the optional group ACL file):
+This fork publishes one image, [kernelorg/mosquitto-go-auth-radius](https://github.com/kernelorg/mosquitto-go-auth/pkgs/container/mosquitto-go-auth-radius), with Mosquitto 2.1.x and the plugin built with `-tags minimal` (`files` and `radius` backends) for `linux/amd64`, `linux/arm64` and `linux/arm/v7`. See [Multi-arch image without QEMU](#multi-arch-image-without-qemu-arm64-mikrotik-containers).
+
 `docker run -it -p 1883:1883 -v /conf:/mosquitto/config/conf.d:ro ghcr.io/kernelorg/mosquitto-go-auth-radius:<tag>`
 
-The plugin is loaded from `auth_plugin /mosquitto/go-auth.so`.
-Images with every backend (Debian based, built by the upstream Dockerfile) are available from [lhns/mosquitto-go-auth](https://github.com/lhns/mosquitto-go-auth/pkgs/container/mosquitto-go-auth); they are not published by this fork.
+Images with every backend are published by [lhns/mosquitto-go-auth](https://github.com/lhns/mosquitto-go-auth/pkgs/container/mosquitto-go-auth).
 
 #### Building images
 
