@@ -1868,12 +1868,12 @@ Only images for x86_64/AMD64 and ARMv7 have been tested. ARMv6 and ARM64 hardwar
 
 #### Prebuilt images
 
-Prebuilt images are provided on GitHub under [lhns/mosquitto-go-auth](https://github.com/lhns/mosquitto-go-auth/pkgs/container/mosquitto-go-auth).
-To run the latest image, use the following command and replace `/conf` with the location of your `.conf` files:
-`docker run -it -p 1884:1884 -p 1883:1883 -v /conf:/etc/mosquitto ghcr.io/lhns/mosquitto-go-auth:<tag>`
+This fork publishes a single image, [kernelorg/mosquitto-go-auth-radius](https://github.com/kernelorg/mosquitto-go-auth/pkgs/container/mosquitto-go-auth-radius): Mosquitto 2.0.x (TLS, websockets, cJSON) plus the plugin built with `-tags minimal` (`files` and `radius` backends only), for `linux/amd64`, `linux/arm64` and `linux/arm/v7`. See [Multi-arch image without QEMU](#multi-arch-image-without-qemu-arm64-mikrotik-containers) for details and RouterOS usage.
+To run it, replace `/conf` with the directory holding your `.conf` files (and the optional group ACL file):
+`docker run -it -p 1883:1883 -v /conf:/mosquitto/config/conf.d:ro ghcr.io/kernelorg/mosquitto-go-auth-radius:<tag>`
 
-You should also add the neccesary configuration to your .conf and update the path of the shared object:
-```auth_plugin /mosquitto/go-auth.so```
+The plugin is loaded from `auth_plugin /mosquitto/go-auth.so`.
+Images with every backend (Debian based, built by the upstream Dockerfile) are available from [lhns/mosquitto-go-auth](https://github.com/lhns/mosquitto-go-auth/pkgs/container/mosquitto-go-auth); they are not published by this fork.
 
 #### Building images
 
