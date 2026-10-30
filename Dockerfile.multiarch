@@ -1,7 +1,7 @@
 #
-# Small multi-arch image (linux/amd64, linux/arm64, linux/arm/v7): Mosquitto built from
-# source with TLS, websockets (static libwebsockets) and cJSON (dynamic
-# security plugin / mosquitto_ctrl), plus the go-auth plugin, on top of the
+# Small multi-arch image (linux/amd64, linux/arm64, linux/arm/v7): Mosquitto 2.1
+# built from source with TLS, built-in websockets and cJSON (dynamic security
+# plugin / mosquitto_ctrl), plus the go-auth plugin, on top of the
 # glibc distroless base (~20 MB). Everything is cross-compiled on the build
 # platform and the runtime stage only copies files, so no QEMU/binfmt is needed.
 #
@@ -16,18 +16,16 @@
 # Layout: /usr/sbin/mosquitto, /mosquitto/go-auth.so, /mosquitto/config/
 # (mosquitto.conf includes /mosquitto/config/conf.d, mount your own there).
 
-ARG MOSQUITTO_VERSION=2.0.22
-ARG LWS_VERSION=4.4.1
+ARG MOSQUITTO_VERSION=2.1.2
 ARG GO_IMAGE=golang:1.26-bookworm
 ARG BASE_IMAGE=gcr.io/distroless/base-debian12:latest
 
 # ---------------------------------------------------------------------------
-# 1. Toolchain for the target architecture, libwebsockets and Mosquitto.
+# 1. Toolchain for the target architecture and Mosquitto.
 # ---------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder
 ARG TARGETARCH
 ARG MOSQUITTO_VERSION
-ARG LWS_VERSION
 
 RUN set -ex; \
     case "$TARGETARCH" in \
@@ -38,39 +36,11 @@ RUN set -ex; \
     esac; \
     [ "$deb_arch" = amd64 ] || dpkg --add-architecture "$deb_arch"; \
     apt-get update; \
-    apt-get install -y --no-install-recommends wget build-essential cmake \
+    apt-get install -y --no-install-recommends wget build-essential \
         "libssl-dev:$deb_arch" "libcjson-dev:$deb_arch" $extra; \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-
-# libwebsockets as a static library (no runtime dependency in the image).
-RUN set -ex; \
-    case "$TARGETARCH" in \
-      arm64) cmake_cross="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc" ;; \
-      arm)   cmake_cross="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=arm -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc" ;; \
-      *) cmake_cross="" ;; \
-    esac; \
-    wget -qO lws.tar.gz "https://github.com/warmcat/libwebsockets/archive/v${LWS_VERSION}.tar.gz"; \
-    mkdir lws; \
-    tar -xzf lws.tar.gz --strip-components=1 -C lws; \
-    rm lws.tar.gz; \
-    cd lws; \
-    cmake . $cmake_cross \
-        -DCMAKE_BUILD_TYPE=MinSizeRel \
-        -DCMAKE_INSTALL_PREFIX=/usr \
-        -DLWS_IPV6=ON \
-        -DLWS_WITHOUT_BUILTIN_GETIFADDRS=ON \
-        -DLWS_WITHOUT_CLIENT=ON \
-        -DLWS_WITHOUT_EXTENSIONS=ON \
-        -DLWS_WITHOUT_TESTAPPS=ON \
-        -DLWS_WITH_HTTP2=OFF \
-        -DLWS_WITH_SHARED=OFF \
-        -DLWS_WITH_ZIP_FOPS=OFF \
-        -DLWS_WITH_ZLIB=OFF \
-        -DLWS_WITH_EXTERNAL_POLL=ON; \
-    make -j "$(nproc)"; \
-    ls lib/libwebsockets.a
 
 # Mosquitto: broker, clients, mosquitto_ctrl and the dynamic-security plugin.
 RUN set -ex; \
@@ -80,13 +50,25 @@ RUN set -ex; \
     tar -xzf mosquitto.tar.gz --strip-components=1 -C mosquitto; \
     rm mosquitto.tar.gz; \
     mkdir -p /usr/local/include; \
-    cp mosquitto/include/*.h /usr/local/include/; \
-    opts="CROSS_COMPILE=$cross CC=gcc CXX=g++ WITH_TLS=yes WITH_WEBSOCKETS=yes WITH_CJSON=yes \
-          WITH_SYSTEMD=no WITH_SRV=no WITH_DOCS=no WITH_STRIP=yes \
+    cp -r mosquitto/include/. /usr/local/include/; \
+    # 2.1: websockets are built in (no libwebsockets), cJSON is mandatory;
+    # sqlite persistence plugin, mosquitto_ctrl shell (libedit) and the HTTP
+    # API (libmicrohttpd) are left out to keep the image small.
+    opts="CROSS_COMPILE=$cross CC=gcc CXX=g++ AR=ar \
+          WITH_TLS=yes WITH_WEBSOCKETS=yes WITH_SQLITE=no WITH_EDITLINE=no WITH_HTTP_API=no \
+          WITH_SYSTEMD=no WITH_SRV=no WITH_DOCS=no WITH_GMOCK=no WITH_STRIP=yes \
           WITH_SHARED_LIBRARIES=yes WITH_STATIC_LIBRARIES=no"; \
-    make -C mosquitto -j "$(nproc)" $opts CFLAGS="-Wall -O2 -I/build/lws/include" LDFLAGS="-L/build/lws/lib"; \
-    make -C mosquitto install DESTDIR=/out $opts; \
-    ls -la /out/usr/local/sbin /out/usr/local/bin /out/usr/local/lib; \
+    make -C mosquitto -j "$(nproc)" $opts; \
+    # The top-level "install" stops at the sqlite plugin that was not built, so install the parts one by one.
+    for d in libcommon lib client apps src plugins/dynamic-security; do \
+        make -C "mosquitto/$d" install DESTDIR=/out $opts; \
+    done; \
+    test -x /out/usr/local/sbin/mosquitto; \
+    test -x /out/usr/local/bin/mosquitto_pub; \
+    test -e /out/usr/local/lib/libmosquitto.so.1; \
+    test -e /out/usr/local/lib/mosquitto_dynamic_security.so; \
+    rm -rf /out/usr/local/lib/pkgconfig /out/usr/local/include; \
+    find /out -type f -o -type l | sort; \
     case "$TARGETARCH" in arm64) triplet=aarch64-linux-gnu ;; arm) triplet=arm-linux-gnueabihf ;; *) triplet=x86_64-linux-gnu ;; esac; \
     mkdir -p /out/lib; cp "/usr/lib/$triplet/libcjson.so.1" /out/lib/
 
@@ -118,9 +100,8 @@ RUN set -ex; \
 FROM ${BASE_IMAGE}
 
 COPY --from=builder /out/usr/local/sbin/mosquitto /usr/sbin/mosquitto
-COPY --from=builder /out/usr/local/lib/libmosquitto.so.1 /out/lib/libcjson.so.1 /usr/lib/
-COPY --from=builder /out/usr/local/lib/mosquitto_dynamic_security.so /usr/lib/mosquitto_dynamic_security.so
-COPY --from=builder /out/usr/local/bin/mosquitto_pub /out/usr/local/bin/mosquitto_sub /out/usr/local/bin/mosquitto_ctrl /usr/bin/
+COPY --from=builder /out/usr/local/lib/ /out/lib/ /usr/lib/
+COPY --from=builder /out/usr/local/bin/ /usr/bin/
 COPY --from=builder /app/go-auth.so /mosquitto/go-auth.so
 COPY docker/mosquitto/ /mosquitto/config/
 

@@ -56,10 +56,9 @@ out=$(mq 'mosquitto_sub -h mosquitto -u sensor1 -P sensorpass -t "sensors/other/
 	mosquitto_pub -h mosquitto -u mqttadmin -P adminpass -t sensors/other/temp -m secret; wait' 2>/dev/null)
 [ -z "$out" ] && pass "sensor1 cannot read sensors/other/#" || fail "sensor1 read a foreign topic: '$out'"
 
-# 9. The broker was built with websockets support (listener from conf.d/websockets.conf).
-# (no grep -q: with pipefail an early exit would fail the pipeline through SIGPIPE)
-out=$(docker compose logs --no-log-prefix mosquitto 2>/dev/null | grep "Opening websockets listen socket on port 9001" || true)
-[ -n "$out" ] && pass "websockets listener opened on 9001" || fail "no websockets listener in the broker log"
+# 9. Websockets listener (conf.d/websockets.conf): a real HTTP upgrade handshake on 9001 must answer 101.
+out=$(mq 'printf "GET /mqtt HTTP/1.1\r\nHost: mosquitto\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: mqtt\r\n\r\n" | nc -w 3 mosquitto 9001 | head -1' 2>/dev/null | tr -d "\r")
+echo "$out" | grep -q "101" && pass "websockets handshake on 9001: $out" || fail "websockets handshake on 9001 failed: '$out'"
 
 echo
 if [ "$failures" -eq 0 ]; then echo "ALL CHECKS PASSED"; else echo "$failures CHECK(S) FAILED"; fi

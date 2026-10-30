@@ -9,7 +9,7 @@
 Mosquitto Go Auth is an authentication and authorization plugin for the Mosquitto MQTT broker.
 The name is terrible, I know, but it's too late to change it. And, you know: naming, cache invalidation, off-by-one errors and whatnot.
 
-> **Note when upgrading to v3.5.0** (applies to the upstream `Dockerfile` and the lhns images; the `mosquitto-go-auth-radius` image published by this fork stays on Mosquitto 2.0.x, see [RADIUS](#radius))
+> **Note when upgrading to v3.5.0** (the `mosquitto-go-auth-radius` image of this fork ships Mosquitto 2.1.x as well, so it applies to it too)
 >
 > Mosquitto is upgraded from 2.0.22 to 2.1.2. Two behaviours to watch for:
 >
@@ -1609,7 +1609,7 @@ docker pull ghcr.io/kernelorg/mosquitto-go-auth-radius:latest
 docker run -d -p 1883:1883 -v /path/to/conf.d:/mosquitto/config/conf.d:ro ghcr.io/kernelorg/mosquitto-go-auth-radius:latest
 ```
 
-The image contains Mosquitto built from source (version from the `MOSQUITTO_VERSION` build argument of `Dockerfile.multiarch`, currently the 2.0.x line) with TLS, websockets (libwebsockets linked statically) and cJSON (dynamic-security plugin and `mosquitto_ctrl` included), and the plugin built with `-tags minimal` (only the `files` and `radius` backends), on the glibc `gcr.io/distroless/base-debian12` base. There is no shell inside. Mosquitto runs as `nonroot`, reads `/mosquitto/config/mosquitto.conf` (which includes `/mosquitto/config/conf.d`) and loads the plugin from `/mosquitto/go-auth.so`. Add `listener 9001` and `protocol websockets` in `conf.d` for MQTT over WebSockets.
+The image contains Mosquitto built from source (version from the `MOSQUITTO_VERSION` build argument of `Dockerfile.multiarch`, currently the 2.1.x line) with TLS, built-in websockets and cJSON (dynamic-security plugin and `mosquitto_ctrl` included; the sqlite persistence plugin, the `mosquitto_ctrl` shell and the HTTP API are left out), and the plugin built with `-tags minimal` (only the `files` and `radius` backends), on the glibc `gcr.io/distroless/base-debian12` base. There is no shell inside. Mosquitto runs as `nonroot`, reads `/mosquitto/config/mosquitto.conf` (which includes `/mosquitto/config/conf.d`) and loads the plugin from `/mosquitto/go-auth.so`. Add `listener 9001` and `protocol websockets` in `conf.d` for MQTT over WebSockets.
 
 `Dockerfile.multiarch` builds the same image for `linux/amd64`, `linux/arm64` or `linux/arm/v7` on a plain amd64 host: everything is cross-compiled with gcc and the runtime stage only copies files, so neither `binfmt_misc` nor QEMU is required (`build-image.sh` falls back to the `docker:cli` container when the buildx plugin is not installed). Pass `--build-arg GO_BUILD_TAGS=` to get every backend; locally `make minimal` or `go build -tags minimal -buildmode=c-shared -o go-auth.so .` does the same.
 
@@ -1918,7 +1918,7 @@ Only images for x86_64/AMD64 and ARMv7 have been tested. ARMv6 and ARM64 hardwar
 
 #### Prebuilt images
 
-This fork publishes a single image, [kernelorg/mosquitto-go-auth-radius](https://github.com/kernelorg/mosquitto-go-auth/pkgs/container/mosquitto-go-auth-radius): Mosquitto 2.0.x (TLS, websockets, cJSON) plus the plugin built with `-tags minimal` (`files` and `radius` backends only), for `linux/amd64`, `linux/arm64` and `linux/arm/v7`. See [Multi-arch image without QEMU](#multi-arch-image-without-qemu-arm64-mikrotik-containers) for details and RouterOS usage.
+This fork publishes a single image, [kernelorg/mosquitto-go-auth-radius](https://github.com/kernelorg/mosquitto-go-auth/pkgs/container/mosquitto-go-auth-radius): Mosquitto 2.1.x (TLS, websockets, cJSON) plus the plugin built with `-tags minimal` (`files` and `radius` backends only), for `linux/amd64`, `linux/arm64` and `linux/arm/v7`. See [Multi-arch image without QEMU](#multi-arch-image-without-qemu-arm64-mikrotik-containers) for details and RouterOS usage.
 To run it, replace `/conf` with the directory holding your `.conf` files (and the optional group ACL file):
 `docker run -it -p 1883:1883 -v /conf:/mosquitto/config/conf.d:ro ghcr.io/kernelorg/mosquitto-go-auth-radius:<tag>`
 
