@@ -9,7 +9,7 @@
 Mosquitto Go Auth is an authentication and authorization plugin for the Mosquitto MQTT broker.
 The name is terrible, I know, but it's too late to change it. And, you know: naming, cache invalidation, off-by-one errors and whatnot.
 
-> **Note when upgrading to v3.5.0**
+> **Note when upgrading to v3.5.0** (applies to the upstream `Dockerfile` and the lhns images; the `mosquitto-go-auth-radius` image published by this fork stays on Mosquitto 2.0.x, see [RADIUS](#radius))
 >
 > Mosquitto is upgraded from 2.0.22 to 2.1.2. Two behaviours to watch for:
 >
@@ -99,6 +99,7 @@ Please open an issue with the `feature` or `enhancement` tag to request new back
 - [LDAP](#ldap)
 - [RADIUS](#radius)
    - [MikroTik User Manager](#mikrotik-user-manager)
+   - [Troubleshooting](#troubleshooting)
    - [RadSec](#radsec)
    - [Testing RADIUS](#testing-radius)
    - [Multi-arch image without QEMU \(ARM64, MikroTik containers\)](#multi-arch-image-without-qemu-arm64-mikrotik-containers)
@@ -1519,20 +1520,61 @@ auth_opt_files_acl_path /etc/mosquitto/conf.d/acls
 
 #### MikroTik User Manager
 
-On RouterOS 7 with the `user-manager` package:
+Tested on RouterOS 7 with the `user-manager` package and the broker running as a RouterOS container on the same device. Menu paths are those of RouterOS 7.1x (`/user-manager/user/group`, not `user-group`).
 
-```
-/user-manager set enabled=yes
-/user-manager/router add name=mosquitto address=192.168.88.10 shared-secret=changeme
-/user-manager/user-group add name=mqtt-sensors outer-auths=pap \
-    attributes=Mikrotik-Group:sensors,Filter-Id:readwrite:sensors/%u/#,Filter-Id:read:status/#
-/user-manager/user-group add name=mqtt-admins outer-auths=pap attributes=Mikrotik-Group:mqtt-superuser
-/user-manager/user add name=sensor1 password=secret group=mqtt-sensors
-/user-manager/user add name=admin password=secret group=mqtt-admins
-```
+1. Enable the server and declare the attributes the plugin reads. `Mikrotik-Group` is built in, `Filter-Id` usually is not: without this step adding a group fails with `input does not match any value of attribute`.
 
-If `Filter-Id` is not in the User Manager dictionary of your version, define it once with `/user-manager/attribute add name=Filter-Id type-id=11 value-type=string packet-types=access-accept`.
+   ```
+   /user-manager set enabled=yes
+   /user-manager/attribute add name=Filter-Id type-id=11 value-type=string packet-types=access-accept
+   ```
+
+2. Register the broker as a RADIUS client. The address is the **source address of the RADIUS requests**: for a container that is its veth address (e.g. `172.18.0.2`, or the whole `172.18.0.0/24`), for an external broker its LAN address. Requests from an unknown address are dropped silently, without a log entry.
+
+   ```
+   /user-manager/router add name=mosquitto address=172.18.0.2 shared-secret=changeme
+   ```
+
+3. If the firewall `input` chain drops traffic that is not from the LAN interface list (the default configuration does), allow RADIUS from the container network:
+
+   ```
+   /ip/firewall/filter add chain=input protocol=udp dst-port=1812 src-address=172.18.0.0/24 action=accept comment="RADIUS from containers" place-before=0
+   ```
+
+4. Create groups with the attributes and assign users. Quote the attribute list, it contains `%` and `#`. `%u` is replaced by the plugin with the user name, so one rule gives every member their own subtree.
+
+   ```
+   /user-manager/user/group add name=debica outer-auths=pap attributes="Filter-Id:readwrite:debica/%u/#"
+   /user-manager/user/group add name=mqtt-admins outer-auths=pap attributes="Mikrotik-Group:mqtt-superuser"
+   /user-manager/user add name=sensor1 password=secret group=debica
+   /user-manager/user add name=admin password=secret group=mqtt-admins
+   ```
+
+   Several rules are comma separated: `attributes="Filter-Id:readwrite:debica/%u/#,Filter-Id:read:debica/common/#"`. Rights take effect at the client's next connection.
+   Alternatively keep only `Mikrotik-Group:<name>` in User Manager and put the topic rules in the group file of the plugin (`radius_acl_file`): useful when the rules are many or RouterOS rejects the characters.
+
+5. Check what the server sends and what the plugin does:
+
+   ```
+   /user-manager/user/group print detail
+   /log print where topics~"radius"
+   /log print where topics~"container"
+   ```
+
 For RadSec set `protocol=radsec` on the router entry, a certificate in `/user-manager set radsec-certificate=...` and `auth_opt_radius_protocol radsec` plus `auth_opt_radius_tls_ca` on the plugin side.
+
+#### Troubleshooting
+
+| Symptom (client side) | Plugin log | Cause |
+|---|---|---|
+| `Connection error: Connection Refused: not authorised.` | `user X rejected` | Wrong password or unknown user: RADIUS answered `Access-Reject`. Authentication works. |
+| `The connection was lost.` after exactly `radius_timeout_ms` × (`radius_retries` + 1), e.g. 4 s, no CONNACK | `server A:1812 did not answer` | No answer from RADIUS: unknown NAS address in `/user-manager/router`, wrong firewall, wrong `radius_servers`, server disabled. The plugin reports an error and Mosquitto closes the connection without CONNACK. |
+| `The connection was lost.` immediately, no user name sent | `empty username or password not allowed` | Anonymous connection; set `auth_opt_allow_empty_credentials true` only if you really want that. |
+| CONNACK ok, then `PUBACK ... RC:135` / `Not authorized` (MQTT 5) or the message is silently dropped (MQTT 3) | `no cached attributes` or nothing | ACL denied: no `Filter-Id` rule, no group file rule, `radius_acl_default deny`. Check `%u` rules (`debica/%u/#` is not `debica/#`) and leading slashes (`/debica` is a different topic than `debica`). |
+| `response authenticator mismatch` | same | Shared secret differs between `radius_secret` and the router entry. |
+| `unknown or empty hasher, defaulting to PBKDF2` at startup | | Harmless, from the password hasher every backend gets; add `auth_opt_hasher pbkdf2` to silence it. |
+
+Use `mosquitto_pub -d -V 5 -q 1` when testing: MQTT 5 with QoS 1 reports ACL denials in the PUBACK reason code, MQTT 3 drops the message silently.
 
 #### RadSec
 
@@ -1558,21 +1600,18 @@ An end-to-end demo with FreeRADIUS lives in `examples/radius-freeradius`: `./tes
 
 #### Multi-arch image without QEMU (ARM64, MikroTik containers)
 
-Ready-made images are published to GitHub Packages by the `build_radius_image.yml` workflow on every push to `master` (tag `latest`) and on every release tag (e.g. `3.6.0` or `v3.6.0`), as a multi-arch manifest for `linux/amd64`, `linux/arm64` and `linux/arm/v7`:
+[![Latest image tag](https://img.shields.io/github/v/release/kernelorg/mosquitto-go-auth?label=ghcr.io%20image%20tag)](https://github.com/kernelorg/mosquitto-go-auth/pkgs/container/mosquitto-go-auth-radius)
+
+Ready-made images are published to GitHub Packages by the `build_radius_image.yml` workflow on every push to `master` (tag `latest`) and on every release (tags `X.Y.Z` and `X.Y`, the badge above shows the current one), as a multi-arch manifest for `linux/amd64`, `linux/arm64` and `linux/arm/v7`:
 
 ```
 docker pull ghcr.io/kernelorg/mosquitto-go-auth-radius:latest
 docker run -d -p 1883:1883 -v /path/to/conf.d:/mosquitto/config/conf.d:ro ghcr.io/kernelorg/mosquitto-go-auth-radius:latest
 ```
 
-On RouterOS the same image can be pulled directly: `/container add remote-image=ghcr.io/kernelorg/mosquitto-go-auth-radius:latest ...` (set `/container/config set registry-url=https://ghcr.io`).
+The image contains Mosquitto built from source (version from the `MOSQUITTO_VERSION` build argument of `Dockerfile.multiarch`, currently the 2.0.x line) with TLS, websockets (libwebsockets linked statically) and cJSON (dynamic-security plugin and `mosquitto_ctrl` included), and the plugin built with `-tags minimal` (only the `files` and `radius` backends), on the glibc `gcr.io/distroless/base-debian12` base. There is no shell inside. Mosquitto runs as `nonroot`, reads `/mosquitto/config/mosquitto.conf` (which includes `/mosquitto/config/conf.d`) and loads the plugin from `/mosquitto/go-auth.so`. Add `listener 9001` and `protocol websockets` in `conf.d` for MQTT over WebSockets.
 
-`Dockerfile.multiarch` builds the same image for `linux/amd64`, `linux/arm64` or `linux/arm/v7` on a plain amd64 host:
-Mosquitto is cross-compiled from source with TLS, websockets (libwebsockets linked statically) and cJSON (dynamic-security plugin and `mosquitto_ctrl` are included), the plugin is cross-compiled with gcc, and the runtime stage is the glibc `gcr.io/distroless/base-debian12` image with only `COPY` steps, so neither `binfmt_misc` nor QEMU is required.
-`build-image.sh` falls back to the `docker:cli` container when the buildx plugin is not installed.
-
-By default the plugin is built with `-tags minimal`, which compiles only the `files` and `radius` backends (no database drivers, gRPC, LDAP or JavaScript), which makes the shared object much smaller. Pass `--build-arg GO_BUILD_TAGS=` to get every backend.
-The same tag works for a local build: `make minimal`, or `go build -tags minimal -buildmode=c-shared -o go-auth.so .`.
+`Dockerfile.multiarch` builds the same image for `linux/amd64`, `linux/arm64` or `linux/arm/v7` on a plain amd64 host: everything is cross-compiled with gcc and the runtime stage only copies files, so neither `binfmt_misc` nor QEMU is required (`build-image.sh` falls back to the `docker:cli` container when the buildx plugin is not installed). Pass `--build-arg GO_BUILD_TAGS=` to get every backend; locally `make minimal` or `go build -tags minimal -buildmode=c-shared -o go-auth.so .` does the same.
 
 Alpine/musl is not an option: musl refuses to `dlopen()` Go c-shared libraries (initial-exec TLS, [golang/go#54805](https://github.com/golang/go/issues/54805)), so the plugin needs glibc.
 
@@ -1581,13 +1620,24 @@ Alpine/musl is not an option: musl refuses to `dlopen()` Go c-shared libraries (
 docker save mosquitto-go-auth-radius:arm64 -o mosquitto-go-auth-radius-arm64.tar
 ```
 
-The image has no shell. Mosquitto runs as `nonroot`, reads `/mosquitto/config/mosquitto.conf` (which includes `/mosquitto/config/conf.d`) and loads the plugin from `/mosquitto/go-auth.so`. Add `listener 9001` and `protocol websockets` in `conf.d` for MQTT over WebSockets.
-Upload the tar to a RouterOS device with the `container` package and mount your `conf.d` directory:
+##### RouterOS container quick start
+
+On a RouterOS 7 device with the `container` package (arm64, arm or x86_64), with `conf.d` prepared on the disk (`go-auth.conf` and optionally `radius-groups.acl`, see the [example](examples/radius-freeradius/mosquitto/conf.d)):
 
 ```
+/interface/veth add name=veth-mqtt address=172.18.0.2/24 gateway=172.18.0.1
+/interface/bridge add name=containers
+/interface/bridge/port add bridge=containers interface=veth-mqtt
+/ip/address add address=172.18.0.1/24 interface=containers
+/ip/firewall/nat add chain=dstnat protocol=tcp dst-port=1883 action=dst-nat to-addresses=172.18.0.2 comment=mqtt
+/container/config set registry-url=https://ghcr.io tmpdir=disk1/pull
 /container/mounts add name=mqtt-conf src=/disk1/mqtt/conf.d dst=/mosquitto/config/conf.d
-/container add file=mosquitto-go-auth-radius-arm64.tar interface=veth1 root-dir=disk1/mqtt/root mounts=mqtt-conf logging=yes start-on-boot=yes
+/container add remote-image=ghcr.io/kernelorg/mosquitto-go-auth-radius:latest interface=veth-mqtt root-dir=disk1/mqtt/root mounts=mqtt-conf logging=yes start-on-boot=yes
+/container start [find]
 ```
+
+From inside the container the router is `172.18.0.1`, so `go-auth.conf` uses `auth_opt_radius_servers 172.18.0.1:1812`, and User Manager sees the requests coming from `172.18.0.2` (see [MikroTik User Manager](#mikrotik-user-manager) for the router entry and the firewall rule). The plugin log goes to `/log print where topics~"container"`.
+To use a file instead of the registry: `/container add file=mosquitto-go-auth-radius-arm64.tar ...` with the tar from `docker save` above.
 
 ### Custom
 
